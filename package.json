@@ -1,7 +1,7 @@
 {
   "name": "@exio.tech/multer-sharp-gridfs-storage",
   "version": "1.0.0",
-  "description": "Stream images without buffering in the middle - client->sharp->gridfs",
+  "description": "Stream images without buffering in the middle - client->sharp->gridfs.",
   "main": "dist/index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
