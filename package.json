@@ -1,0 +1,21 @@
+{
+  "name": "multer-sharp-gridfs",
+  "version": "1.0.0",
+  "description": "Package Description",
+  "main": "dist/index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "nodemon --watch src/ --ext ts --exec 'tsc && node dist/index.js'",
+    "build": "tsc",
+    "prepare": "npm run build"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^14.11.2",
+    "nodemon": "^2.0.4"
+  },
+  "types": "dist/index.d.ts"
+}
