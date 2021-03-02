@@ -89,6 +89,7 @@ export class MulterSharpGridFs implements StorageEngine {
         cb(null, new ObjectId())
     }
     protected GridFSStreamMap = new Map()
+    protected abortCbMap = new Map()
 
     constructor(opts: MulterSharpGridFsOptions) {
         if (!(opts.gridFSBucket instanceof Object)) {
@@ -120,6 +121,9 @@ export class MulterSharpGridFs implements StorageEngine {
     }
 
     _handleFile(req: any, file: any, cb: any) {
+        const abortcb = (cb: any) => cb(new Error('ERR: Request Aborted. File upload will be stoped, and all changes will be removed'))
+        this.abortCbMap.set(file, abortcb)
+
         this.gridFSBucket(req, file, (err: any, gridFSBucket: any) => {
             if (err) return cb(err)
 
@@ -149,6 +153,8 @@ export class MulterSharpGridFs implements StorageEngine {
                                 sharpStream.on('error', (err: any) => cb(err))
                                 gridFSStream.on('error', (err: any) => cb(err))
                                 gridFSStream.on('finish', (file: any) => {
+                                    req.off('aborted', this.abortCbMap.get(file))
+                                    this.abortCbMap.delete(file)
                                     this.GridFSStreamMap.delete(file)
 
                                     cb(null, {
@@ -169,17 +175,21 @@ export class MulterSharpGridFs implements StorageEngine {
     }
 
     async _removeFile(req: any, file: any, cb: any) {
-        const gridFSStream = this.GridFSStreamMap.get(file)
-        if (gridFSStream) {
-            try {
-                await gridFSStream.abort()
-                await file.gridFSBucket.delete(file.gridFSId)
-            } catch { } finally {
+        try {
+            req.off('aborted', this.abortCbMap.get(file))
+            this.abortCbMap.delete(file)
+            const gridFSStream = this.GridFSStreamMap.get(file)
+            if (gridFSStream) {
+                try {
+                    await gridFSStream.abort()
+                } catch { }
+                try {
+                    await file.gridFSBucket.delete(file.gridFSId)
+                } catch { }
                 this.GridFSStreamMap.delete(file)
                 return cb(null, true)
             }
-        }
-
+        } catch { }
         cb(null, true)
     }
 }
