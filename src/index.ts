@@ -7,6 +7,7 @@ import {
 } from 'multer'
 import {
     GridFSBucket,
+    GridFSBucketWriteStream,
     GridFSBucketOpenUploadStreamOptions,
     ObjectID,
 } from 'mongodb'
@@ -17,6 +18,35 @@ import {
 
 type ExpressRequest = Parameters<StorageEngine['_handleFile']>[0]
 type ExpressFile = Parameters<StorageEngine['_handleFile']>[1]
+
+declare global {
+    namespace Express {
+        namespace Multer {
+            interface File {
+                /** 
+                 * `MulterSharpGridfsStorage` only: Id of file in `GridFS`
+                 * NOTE: This Field will be populated on file only if upload successfully started
+                 */
+                gridFSId?: string | ObjectID
+                /** 
+                 * `MulterSharpGridfsStorage` only: Name of file in `GridFS`
+                 * NOTE: This Field will be populated on file only if upload successfully started
+                 */
+                gridFSFilename?: string
+                /** 
+                 * `MulterSharpGridfsStorage` only: Instance of `GridFSBucket`
+                 * NOTE: This Field will be populated on file only if upload successfully started
+                 */
+                gridFSBucket?: GridFSBucket
+                /**
+                 * GridFS File information after upload
+                 * NOTE: This Field will be populated on file only if upload successfully started
+                 */
+                gridFSFile?: any
+            }
+        }
+    }
+}
 
 export interface MulterSharpGridFsOptions {
     /**GridFsBucket or function which returnes GridFSBucket */
@@ -106,17 +136,17 @@ export class MulterSharpGridFs implements StorageEngine {
                         this.generateId(req, file, (err: any, id: any) => {
                             if (err) return cb(err)
                             file.gridFSId = id
-                            file.filename = uploadFilename
+                            file.gridFSFilename = uploadFilename
                             file.gridFSBucket = gridFSBucket
 
                             try {
                                 const gridFSStream = gridFSBucket.openUploadStreamWithId(id, uploadFilename, uploadOptions)
-                                this.GridFSStreamMap.set(req, gridFSStream)
+                                this.GridFSStreamMap.set(file, gridFSStream)
 
                                 sharpStream.on('error', (err: any) => cb(err))
                                 gridFSStream.on('error', (err: any) => cb(err))
                                 gridFSStream.on('finish', (file: any) => {
-                                    this.GridFSStreamMap.delete(req)
+                                    this.GridFSStreamMap.delete(file)
 
                                     cb(null, {
                                         gridFSFile: file
@@ -136,12 +166,12 @@ export class MulterSharpGridFs implements StorageEngine {
     }
 
     async _removeFile(req: any, file: any, cb: any) {
-        const gridFSStream = this.GridFSStreamMap.get(req)
+        const gridFSStream = this.GridFSStreamMap.get(file)
         if (gridFSStream) {
             try {
                 await gridFSStream.abort()
             } catch { } finally {
-                this.GridFSStreamMap.delete(req)
+                this.GridFSStreamMap.delete(file)
                 return cb(null, true)
             }
         }
