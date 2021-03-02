@@ -150,11 +150,15 @@ export class MulterSharpGridFs implements StorageEngine {
                                 const gridFSStream = gridFSBucket.openUploadStreamWithId(id, uploadFilename, uploadOptions)
                                 this.GridFSStreamMap.set(file, gridFSStream)
 
+                                req.once('aborted', abortcb)
                                 sharpStream.on('error', (err: any) => cb(err))
                                 gridFSStream.on('error', (err: any) => cb(err))
                                 gridFSStream.on('finish', (file: any) => {
-                                    req.off('aborted', this.abortCbMap.get(file))
-                                    this.abortCbMap.delete(file)
+                                    const abortcb = this.abortCbMap.get(file)
+                                    if (abortcb) {
+                                        req.off('aborted', abortcb)
+                                        this.abortCbMap.delete(file)
+                                    }
                                     this.GridFSStreamMap.delete(file)
 
                                     cb(null, {
@@ -176,8 +180,11 @@ export class MulterSharpGridFs implements StorageEngine {
 
     async _removeFile(req: any, file: any, cb: any) {
         try {
-            req.off('aborted', this.abortCbMap.get(file))
-            this.abortCbMap.delete(file)
+            const abortcb = this.abortCbMap.get(file)
+            if (abortcb) {
+                req.off('aborted', abortcb)
+                this.abortCbMap.delete(file)
+            }
             const gridFSStream = this.GridFSStreamMap.get(file)
             if (gridFSStream) {
                 try {
