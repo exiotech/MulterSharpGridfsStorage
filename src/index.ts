@@ -27,7 +27,7 @@ declare global {
                  * `MulterSharpGridfsStorage` only: Id of file in `GridFS`
                  * NOTE: This Field will be populated on file only if upload successfully started
                  */
-                gridFSId?: string | ObjectID
+                gridFSId?: ObjectID
                 /** 
                  * `MulterSharpGridfsStorage` only: Name of file in `GridFS`
                  * NOTE: This Field will be populated on file only if upload successfully started
@@ -135,7 +135,9 @@ export class MulterSharpGridFs implements StorageEngine {
 
                         this.generateId(req, file, (err: any, id: any) => {
                             if (err) return cb(err)
-                            file.gridFSId = id
+                            if (!ObjectId.isValid(id)) cb(new Error(`Invalid Objectid: ${id}`))
+
+                            file.gridFSId = typeof id === 'string' ? id : new ObjectId(id)
                             file.gridFSFilename = uploadFilename
                             file.gridFSBucket = gridFSBucket
 
@@ -170,6 +172,7 @@ export class MulterSharpGridFs implements StorageEngine {
         if (gridFSStream) {
             try {
                 await gridFSStream.abort()
+                await file.gridFSBucket.delete(file.gridFSId)
             } catch { } finally {
                 this.GridFSStreamMap.delete(file)
                 return cb(null, true)
