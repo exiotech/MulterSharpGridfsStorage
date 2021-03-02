@@ -1,4 +1,6 @@
-import ObjectId from 'bson-objectid'
+import {
+    ObjectId,
+} from 'mongodb'
 import sharp from 'sharp'
 
 // Types
@@ -7,7 +9,6 @@ import {
 } from 'multer'
 import {
     GridFSBucket,
-    GridFSBucketWriteStream,
     GridFSBucketOpenUploadStreamOptions,
     ObjectID,
 } from 'mongodb'
@@ -135,9 +136,9 @@ export class MulterSharpGridFs implements StorageEngine {
 
                         this.generateId(req, file, (err: any, id: any) => {
                             if (err) return cb(err)
-                            if (!ObjectId.isValid(id)) cb(new Error(`Invalid Objectid: ${id}`))
+                            if (!ObjectId.isValid(id)) return cb(new Error(`Invalid Objectid: ${id}`))
 
-                            file.gridFSId = typeof id === 'string' ? id : new ObjectId(id)
+                            file.gridFSId = typeof id === 'string' ? new ObjectId(id) : id
                             file.gridFSFilename = uploadFilename
                             file.gridFSBucket = gridFSBucket
 
