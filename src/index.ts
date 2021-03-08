@@ -9,14 +9,13 @@ import {
 } from 'multer'
 import {
     GridFSBucket,
-    GridFSBucketOpenUploadStreamOptions,
-    ObjectID,
+    GridFSBucketOpenUploadStreamOptions
 } from 'mongodb'
 import {
     Sharp,
 } from 'sharp'
 
-
+// new GridFSBucket().openUploadStreamWithId().
 type ExpressRequest = Parameters<StorageEngine['_handleFile']>[0]
 type ExpressFile = Parameters<StorageEngine['_handleFile']>[1]
 
@@ -28,7 +27,7 @@ declare global {
                  * `MulterSharpGridfsStorage` only: Id of file in `GridFS`
                  * NOTE: This Field will be populated on file only if upload successfully started
                  */
-                gridFSId?: ObjectID
+                gridFSId?: ObjectId
                 /** 
                  * `MulterSharpGridfsStorage` only: Name of file in `GridFS`
                  * NOTE: This Field will be populated on file only if upload successfully started
@@ -71,7 +70,7 @@ export interface MulterSharpGridFsOptions {
      * Id to store file with
      * @default - new ObjectId()
      */
-    generateId?(req: ExpressRequest, file: ExpressFile, cb: (error?: any, generateId?: string | ObjectID) => void): void
+    generateId?(req: ExpressRequest, file: ExpressFile, cb: (error?: any, generateId?: string | ObjectId) => void): void
 }
 
 export class MulterSharpGridFs implements StorageEngine {
@@ -89,7 +88,8 @@ export class MulterSharpGridFs implements StorageEngine {
         cb(null, new ObjectId())
     }
     protected GridFSStreamMap = new Map()
-    protected abortCbMap = new Map()
+    protected abortcbMap = new Map()
+    protected failedMap = new Map()
 
     constructor(opts: MulterSharpGridFsOptions) {
         if (!(opts.gridFSBucket instanceof Object)) {
@@ -139,7 +139,8 @@ export class MulterSharpGridFs implements StorageEngine {
                             if (err) return cb(err)
                             if (!ObjectId.isValid(id)) return cb(new Error(`Invalid Objectid: ${id}`))
 
-                            file.gridFSId = typeof id === 'string' ? new ObjectId(id) : id
+                            id = typeof id === 'string' ? new ObjectId(id) : id
+                            file.gridFSId = id
                             file.gridFSFilename = uploadFilename
                             file.gridFSBucket = gridFSBucket
 
@@ -148,26 +149,38 @@ export class MulterSharpGridFs implements StorageEngine {
                                 this.GridFSStreamMap.set(file, gridFSStream)
 
                                 const abortcb = async () => {
-                                    try {
-                                        await new Promise((res: any, rej: any) => gridFSStream.abort((err: any) => {
-                                            if (err) return rej(err)
-                                            res()
-                                        }))
-                                    } catch { }
+                                    console.log('aborted-1')
                                     cb(new Error('ERR: Request Aborted. File upload will be stoped, and all changes will be removed'))
+                                    console.log('aborted-2')
+                                    await this.__removeFile(req, file, () => { })
+                                    await this.__exhaustAbortcb(req, file)
                                 }
-                                this.abortCbMap.set(file, abortcb)
+                                this.abortcbMap.set(file, abortcb)
 
 
                                 req.once('aborted', abortcb)
-                                sharpStream.on('error', (err: any) => cb(err))
-                                gridFSStream.on('error', (err: any) => cb(err))
+                                sharpStream.on('error', async (err: any) => {
+                                    console.log('e443-1')
+                                    cb(err)
+                                    console.log('e443-2')
+                                    await this.__removeFile(req, file, () => { })
+                                    this.__exhaustAbortcb(req, file)
+                                })
+                                gridFSStream.on('error', async (err: any) => {
+                                    console.log('e1228-1')
+                                    cb(err)
+                                    console.log('e1228-2')
+                                    await this.__removeFile(req, file, () => { })
+                                    this.__exhaustAbortcb(req, file)
+                                })
                                 gridFSStream.on('finish', (file: any) => {
-                                    const abortcb = this.abortCbMap.get(file)
-                                    this.abortCbMap.delete(file)
-                                    if (abortcb) {
-                                        req.off('aborted', abortcb)
-                                    }
+                                    const isFailed = this.failedMap.get(file)
+                                    this.failedMap.delete(file)
+                                    if (isFailed) return console.log('finish failed')
+                                    console.log('finish success')
+
+                                    this.__exhaustAbortcb(req, file)
+
                                     this.GridFSStreamMap.delete(file)
 
                                     cb(null, {
@@ -177,6 +190,7 @@ export class MulterSharpGridFs implements StorageEngine {
 
                                 file.stream.pipe(sharpStream)
                                 sharpStream.pipe(gridFSStream)
+                                console.log('start stream')
                             } catch (err) {
                                 cb(err)
                             }
@@ -187,27 +201,63 @@ export class MulterSharpGridFs implements StorageEngine {
         })
     }
 
-    async _removeFile(req: any, file: any, cb: any) {
-        try {
-            const abortcb = this.abortCbMap.get(file)
-            if (abortcb) {
-                req.off('aborted', abortcb)
-                this.abortCbMap.delete(file)
-            }
-            const gridFSStream = this.GridFSStreamMap.get(file)
-            this.GridFSStreamMap.delete(file)
-            if (gridFSStream) {
-                try {
-                    await new Promise((res: any, rej: any) => gridFSStream.abort((err: any) => {
-                        if (err) return rej(err)
-                        res()
-                    }))
-                    await file.gridFSBucket.delete(file.gridFSId)
-                } catch { }
-
-                return cb(null, true)
-            }
-        } catch { }
+    /**
+     * This methods currently added only for StorageEngine specification complience
+     * It`s not working due to the bug - https://github.com/expressjs/multer/issues/259
+     */
+    _removeFile(req: any, file: any, cb: any) {
+        // this.__exhaustAbortcb(req, file)
+        // this._removeFile(req, file, cb)
         cb(null, true)
+    }
+
+    /**
+     * Here GridFSAbort has bug - it only stops operation of upload,
+     * but not perform cleanup of database from already insterted chunks
+     */
+    private async __removeFile(req: any, file: any, cb: any) {
+        console.log('__removeFile entered')
+        const isFailed = this.failedMap.get(file)
+        if (!isFailed) {
+            console.log('is not failed before, must be removed')
+            this.failedMap.set(file, true)
+            try {
+                const gridFSStream = this.GridFSStreamMap.get(file)
+                this.GridFSStreamMap.delete(file)
+                if (gridFSStream) {
+                    try {
+                        console.log('end upload stream-1')
+                        await new Promise((res: any, rej: any) => gridFSStream.end((err: any) => {
+                            console.log('jungle book')
+                            if (err) return rej(err)
+                            res()
+                        }))
+                        console.log('end upload stream-2')
+                    } catch { }
+                    try {
+                        console.log('delete file-1')
+                        await new Promise((res: any, rej: any) => file.gridFSBucket.delete(file.gridFSId, (err: any) => {
+                            if (err) return rej(err)
+                            res()
+                        }))
+                        console.log('delete file-2')
+                    } catch { }
+
+                    return cb(null, true)
+                }
+            } catch { }
+        }
+
+        cb(null, true)
+    }
+
+    private __exhaustAbortcb(req: any, file: any) {
+        const abortcb = this.abortcbMap.get(file)
+        if (abortcb) {
+            try {
+                req.off('aborted', abortcb)
+                this.abortcbMap.delete(file)
+            } catch { }
+        }
     }
 }
